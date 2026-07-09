@@ -1,0 +1,124 @@
+@startuml
+skinparam conditionStyle inside
+skinparam ActivityBackgroundColor #f1f5f9
+skinparam ActivityBorderColor #475569
+skinparam ActivityFontName "Helvetica"
+skinparam ActivityFontSize 12
+skinparam ArrowColor #64748b
+skinparam ConditionBackgroundColor #f8fafc
+skinparam ConditionBorderColor #64748b
+
+title Flowchart of the Rust Email Validator
+
+start
+
+:Parse CLI arguments with clap;
+:Determine 'is_quiet' (Format == Gophish AND NOT Verbose);
+
+partition "Phase 0: Data Ingestion" {
+  if (Input file (-i) provided?) then (yes)
+    :Read entire file content into memory;
+  else (no)
+    :Read data from STDIN (pipe);
+  endif
+
+  if (Input data empty?) then (yes)
+    :Log error to STDERR and exit program;
+    stop
+  else (no)
+  endif
+
+  :Extract all valid emails using robust Regex;
+  :Deduplicate and sort extracted emails;
+  :Initialize empty set 'wildcard_domains';
+}
+
+if (Method == SMTP AND Wildcard detection enabled?) then (yes)
+  partition "Phase 1: Wildcard Pre-Check" {
+    :Extract unique domains from unique emails;
+    if (NOT is_quiet?) then (yes)
+      :Log "Running Pre-Check" to STDERR;
+    else (no)
+    endif
+    while (For each unique domain) is (Next domain)
+      :Generate fake email (dlfAxs...@domain);
+      :Execute async SMTP/MX check;
+      if (Status == Reachable::Safe OR Risky?) then (yes)
+        :Add domain to 'wildcard_domains' set;
+        if (NOT is_quiet?) then (yes)
+          :Log warning to STDERR: "[!] Wildcard detected";
+        else (no)
+        endif
+      else (no)
+      endif
+    endwhile (No more domains)
+  }
+else (no)
+  :Skip Phase 1;
+endif
+
+partition "Phase 2: Validating Email List" {
+  :Initialize empty vector 'valid_emails';
+  if (NOT is_quiet?) then (yes)
+    :Log "Validating Email List" to STDERR;
+  else (no)
+  endif
+
+  while (For each unique email) is (Next email)
+    if (Method == Regex?) then (yes)
+      :Check Syntax via Regex;
+    elseif (Method == MX?) then (yes)
+      :Check Syntax via Regex;
+      :Execute DNS MX Lookup via Hickory;
+    else (Method == SMTP)
+      :Create CheckEmailInput object;
+      :Execute async full SMTP handshake
+      via check-if-email-exists;
+    endif
+
+    if (Validation Successful?) then (yes)
+      :Add email to 'valid_emails';
+      if (NOT is_quiet?) then (yes)
+        if (Method == SMTP AND Domain in 'wildcard_domains'?) then (yes)
+          :Log to STDERR: [+] Email in Yellow (Catch-All);
+        else (no)
+          :Log to STDERR: [+] Email in Green;
+        endif
+      else (no)
+      endif
+    else (no)
+      if (NOT is_quiet?) then (yes)
+        :Log to STDERR: [-] Email in Red;
+      else (no)
+      endif
+    endif
+  endwhile (No more emails left)
+}
+
+partition "Phase 3: Handle Output (Unified Stream)" {
+  if (Output file (-o) provided?) then (yes)
+    :Set Output Stream = File;
+  else (no)
+    :Set Output Stream = STDOUT;
+  endif
+
+  if (Format == Gophish?) then (yes)
+    :Write valid emails as CSV to Output Stream;
+  else (List)
+    :Write valid emails as text list to Output Stream;
+  endif
+
+  note right
+    Writes are checked for errors.
+    Quietly exit loop if pipe is broken.
+  end note
+
+  if (Output file (-o) provided AND NOT is_quiet?) then (yes)
+    :Log success message to STDERR;
+  else (no)
+  endif
+}
+
+stop
+
+@enduml

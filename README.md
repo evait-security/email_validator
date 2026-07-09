@@ -1,0 +1,159 @@
+# 📧 Email Validator
+
+> Fast, statically linked email list validator in Rust — zero runtime overhead.
+
+**Email Validator** extracts, deduplicates, and validates email addresses from any
+text source (TXT, Markdown, XML, CSV, STDIN pipes). Three validation modes:
+regex only, MX lookup, or full SMTP handshake.
+
+---
+
+## 🚀 Quickstart
+
+```bash
+# Simplest usage: file in, validated list out
+email_validator -i input.txt -o verified.txt
+
+# Regex-only validation (no network)
+email_validator -i mails.txt -m regex
+
+# GoPhish CSV output format
+email_validator -i mails.txt -o out.csv -f gophish
+
+# Via pipe (STDIN)
+cat mails.txt | email_validator -f list
+```
+
+---
+
+## 📥 Download (Standalone Binary)
+
+The binary is **statically linked** (musl), **compressed with UPX**, and runs on
+**any Linux x86_64** — Alpine, Arch, Debian, Ubuntu, CentOS, embedded systems.
+No glibc, no runtime dependencies.
+
+👉 **[Download latest release](../../releases/latest)**
+
+Simply make it executable and go:
+
+```bash
+chmod +x email_validator
+./email_validator -i emails.txt -o clean.txt
+```
+
+---
+
+## 🛠️ Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-i` | Input file (optional, STDIN otherwise) | `—` |
+| `-o` | Output file (optional, STDOUT otherwise) | `—` |
+| `-m` | Validation method: `regex`, `mx`, `smtp` | `smtp` |
+| `-f` | Output format: `list`, `gophish` | `list` |
+| `-d` | Disable wildcard domain check | `false` |
+| `-v` | Verbose mode | `false` |
+
+---
+
+## 🔍 Validation Methods
+
+| Method | Description | Network |
+|--------|-------------|---------|
+| `regex` | Syntax check via RFC-compliant regex | ❌ |
+| `mx`   | Regex + MX record lookup of domain | ✅ |
+| `smtp` | Regex + MX + SMTP handshake (RCPT TO) | ✅ |
+
+---
+
+## 📋 Supported Input Formats
+
+The regex parser reliably extracts emails from:
+
+- **TXT** — prose, lists, CSV exports
+- **Markdown** — links, code blocks, tables, `mailto:` links
+- **XML** — attributes, CDATA sections, text nodes
+- **HTML** — tags, attributes, plaintext
+- Any **mixed content** with noise, special characters, and broken entries
+
+Duplicates (including case-insensitive variants) are automatically detected and removed.
+
+---
+
+## 🧪 Build from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/USERNAME/email_validator.git
+cd email_validator
+
+# Build a static binary (requires musl toolchain)
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+
+# Optional: compress with UPX (~8 MB → ~3 MB)
+upx --best --lzma target/x86_64-unknown-linux-musl/release/email_validator
+```
+
+Run tests (30 total, all green ✅):
+
+```bash
+cargo test
+```
+
+---
+
+## � Architecture
+
+### Program Flow
+
+![Program Flow](doc/email_validator_flow.png)
+
+### Sequence Diagram
+
+![Sequence Diagram](doc/program_sequence.png)
+
+```bash
+# Regenerate diagrams (requires plantuml)
+cd doc && plantuml *.puml
+```
+
+---
+
+## 🛠️ Developer Documentation
+
+Module-level docs for all internal types and functions are available as
+auto-generated HTML. Built and shipped with every release.
+
+### Browse Online
+
+👉 **[Developer Docs](../../releases/latest)** — download `email_validator_docs.tar.gz`
+from the latest release, extract, and open `email_validator_docs/email_validator/index.html`.
+
+### Build Locally
+
+```bash
+cargo doc --no-deps --open
+```
+
+This opens a local browser with docs for `ingestion`, `precheck`,
+`validation`, `output`, and all public types.
+
+---
+
+## �📜 License
+
+This project is **free to use** — Public Domain / Unlicense.
+You may copy, modify, distribute, and use it in your own projects
+(including commercial software) without restriction.
+No copyleft, no attribution required.
+
+---
+
+## 🧬 Tech Stack
+
+- **Rust** (Edition 2024)
+- **musl** — fully static linking
+- **UPX** — binary compression for minimal download size
+- **Property-Based Testing** via `proptest` for fuzzing Markdown/XML/noise inputs
+- **CI/CD** via GitHub Actions (tests + automatic release)

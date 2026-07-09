@@ -1,0 +1,84 @@
+@startuml
+skinparam SequenceLifeLineBackgroundColor #f1f5f9
+skinparam SequenceLifeLineBorderColor #475569
+skinparam SequenceBoxBackgroundColor #f8fafc
+skinparam SequenceBoxBorderColor #64748b
+skinparam ParticipantBackgroundColor #e2e8f0
+skinparam ParticipantBorderColor #475569
+
+title Email Validator — Program Sequence
+
+actor User
+participant "main()" as Main
+participant "ingestion" as Ing
+participant "precheck" as Pre
+participant "validation" as Val
+participant "output" as Out
+collections "External Services" as Ext
+
+== Startup ==
+User -> Main : email_validator -i file.txt -o out.csv -m smtp -f gophish
+Main -> Main : Cli::parse() → args, format, method, flags
+Main -> Main : is_quiet = Format::Gophish && !verbose
+
+== Phase 0: Ingestion ==
+Main -> Ing : run(&cli)
+Ing -> Ing : Read file or STDIN → raw string
+Ing -> Ing : extract_and_deduplicate(raw)
+note right
+  Regex: (?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}
+  → find_iter → sort → dedup
+end note
+Ing --> Main : Vec<String> unique_emails
+
+== Phase 1: Wildcard Pre-Check ==
+Main -> Pre : run(&cli, &unique_emails, is_quiet)
+alt method == SMTP && !disable_wildcard
+  Pre -> Pre : Extract unique domains
+  loop for each domain
+    Pre -> Ext : SMTP check: fake@domain
+    Ext --> Pre : Reachable::Safe | Risky | ...
+    alt catch-all detected
+      Pre -> Pre : insert domain → wildcard_domains
+    end
+  end
+end
+Pre --> Main : HashSet<String> wildcard_domains
+
+== Phase 2: Validation ==
+Main -> Val : run(&cli, &unique_emails, &wildcard_domains, is_quiet)
+loop for each email
+  alt method == Regex
+    Val -> Val : mark valid (no lookup)
+  else method == MX
+    Val -> Ext : hickory-resolver MX lookup
+    Ext --> Val : MX records found? → valid
+  else method == SMTP
+    Val -> Ext : check-if-email-exists SMTP handshake
+    Ext --> Val : Reachable result
+    alt domain in wildcard_domains
+      Val -> Val : mark valid + catch-all warning
+    end
+  end
+end
+Val --> Main : Vec<String> valid_emails
+
+== Phase 3: Output ==
+Main -> Out : run(&cli, &valid_emails, is_quiet)
+alt output file (-o)
+  Out -> Out : Create file writer
+else no -o
+  Out -> Out : Use STDOUT
+end
+alt format == Gophish
+  Out -> Out : Write CSV (csv crate)
+  note right
+    First Name,Last Name,Email,Position
+    ,,user@example.com,
+  end note
+else format == List
+  Out -> Out : Write one email per line
+end
+Out --> Main : done (exit 0)
+
+@enduml
