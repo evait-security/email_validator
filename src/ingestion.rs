@@ -11,9 +11,16 @@
 
 use std::fs::File;
 use std::io::{self, Read};
+use std::collections::HashSet;
 use colored::*;
 use regex::Regex;
 use crate::Cli;
+
+/// Maximum total input size in bytes (10 MB).
+const MAX_INPUT_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Chunk size per read iteration (64 KB).
+const CHUNK_SIZE: usize = 64 * 1024;
 
 /// Extract all email addresses from a raw string using regex,
 /// then sort and deduplicate the results.
@@ -49,40 +56,119 @@ pub fn extract_and_deduplicate(input: &str) -> Vec<String> {
 
 /// Read input (file or STDIN), extract, deduplicate, and sort emails.
 ///
+/// Reads in 64 KB chunks to avoid unbounded memory allocation. A hard limit
+/// of 10 MB total input is enforced. Emails are extracted incrementally and
+/// deduplicated in a [`HashSet`] to keep memory usage proportional to the
+/// number of unique addresses, not the raw input size.
+///
 /// # Panics
 ///
 /// Does not panic — exits the process gracefully with status 1 on file errors
 /// or status 0 when no valid emails are found.
 pub fn run(cli: &Cli) -> Vec<String> {
-    let mut raw_input = String::new();
-    
-    if let Some(input_file) = &cli.input {
-        if let Ok(mut file) = File::open(input_file) {
-            file.read_to_string(&mut raw_input).unwrap_or_else(|_| {
-                eprintln!("{}", "[!] Error while reading the input file".red());
-                std::process::exit(1);
-            });
-        } else {
-            eprintln!("{}", "[!] Error: File not found".red());
-            std::process::exit(1);
+    let email_regex = Regex::new(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}").unwrap();
+    let mut unique_emails: HashSet<String> = HashSet::new();
+    let mut total_bytes_read: u64 = 0;
+    let mut overflow_buffer = String::new();
+
+    // Helper: extract emails from a chunk and insert into the set.
+    let mut process_chunk = |chunk: &str| {
+        for mat in email_regex.find_iter(chunk) {
+            unique_emails.insert(mat.as_str().to_lowercase());
         }
-    } else {
-        if io::stdin().read_to_string(&mut raw_input).is_ok() {
-            if raw_input.trim().is_empty() {
-                eprintln!("No input found. Use -i or pipe data via STDIN.");
-                std::process::exit(0);
+    };
+
+    if let Some(input_file) = &cli.input {
+        let mut file = match File::open(input_file) {
+            Ok(f) => f,
+            Err(_) => {
+                eprintln!("{}", "[!] Error: File not found".red());
+                std::process::exit(1);
+            }
+        };
+
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        loop {
+            let n = match file.read(&mut buf) {
+                Ok(0) => break, // EOF
+                Ok(n) => n,
+                Err(_) => {
+                    eprintln!("{}", "[!] Error while reading the input file".red());
+                    std::process::exit(1);
+                }
+            };
+            total_bytes_read += n as u64;
+            if total_bytes_read > MAX_INPUT_SIZE {
+                eprintln!("{}", format!("[!] Input exceeds maximum size of {} MB", MAX_INPUT_SIZE / (1024 * 1024)).red());
+                std::process::exit(1);
+            }
+            let chunk_str = String::from_utf8_lossy(&buf[..n]);
+            // Prepend any overflow from the previous chunk (partial email at boundary).
+            let combined = if overflow_buffer.is_empty() {
+                chunk_str.into_owned()
+            } else {
+                let combined = overflow_buffer.clone() + &chunk_str;
+                overflow_buffer.clear();
+                combined
+            };
+            process_chunk(&combined);
+            // Keep the last chunk's tail that might be a partial email
+            // (everything after the last whitespace or newline).
+            if let Some(last_ws) = combined.rfind(|c: char| c.is_whitespace()) {
+                overflow_buffer = combined[last_ws..].to_string();
             }
         }
+        // Process any leftover overflow.
+        if !overflow_buffer.is_empty() {
+            process_chunk(&overflow_buffer);
+        }
+    } else {
+        let stdin = io::stdin();
+        let mut handle = stdin.lock();
+        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut had_input = false;
+        loop {
+            let n = match handle.read(&mut buf) {
+                Ok(0) => break, // EOF
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            had_input = true;
+            total_bytes_read += n as u64;
+            if total_bytes_read > MAX_INPUT_SIZE {
+                eprintln!("{}", format!("[!] Input exceeds maximum size of {} MB", MAX_INPUT_SIZE / (1024 * 1024)).red());
+                std::process::exit(1);
+            }
+            let chunk_str = String::from_utf8_lossy(&buf[..n]);
+            let combined = if overflow_buffer.is_empty() {
+                chunk_str.into_owned()
+            } else {
+                let combined = overflow_buffer.clone() + &chunk_str;
+                overflow_buffer.clear();
+                combined
+            };
+            process_chunk(&combined);
+            if let Some(last_ws) = combined.rfind(|c: char| c.is_whitespace()) {
+                overflow_buffer = combined[last_ws..].to_string();
+            }
+        }
+        if !overflow_buffer.is_empty() {
+            process_chunk(&overflow_buffer);
+        }
+        if !had_input {
+            eprintln!("No input found. Use -i or pipe data via STDIN.");
+            std::process::exit(0);
+        }
     }
-
-    let unique_emails = extract_and_deduplicate(&raw_input);
 
     if unique_emails.is_empty() {
         eprintln!("{}", "[!] No valid emails found in input.".yellow());
         std::process::exit(0);
     }
 
-    unique_emails
+    let mut sorted: Vec<String> = unique_emails.into_iter().collect();
+    sorted.sort();
+    sorted
 }
 
 #[cfg(test)]

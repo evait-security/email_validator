@@ -33,9 +33,9 @@ pub fn run(cli: &Cli, output_data: &[String], is_quiet: bool) {
     match cli.format {
         Format::Gophish => {
             let mut wtr = csv::Writer::from_writer(dest);
-            let _ = wtr.write_record(&["First Name", "Last Name", "Email", "Position"]);
+            let _ = wtr.write_record(["First Name", "Last Name", "Email", "Position"]);
             for email in output_data {
-                if wtr.write_record(&["", "", email, ""]).is_err() { break; }
+                if wtr.write_record(["", "", email, ""]).is_err() { break; }
             }
             let _ = wtr.flush();
         }
@@ -47,9 +47,9 @@ pub fn run(cli: &Cli, output_data: &[String], is_quiet: bool) {
         }
     }
 
-    if let Some(output_file) = &cli.output {
-        if !is_quiet {
-            eprintln!("{}", format!("[*] {} valid emails successfully processed and saved to '{}'.", output_data.len(), output_file).white());
-        }
+    if let Some(output_file) = &cli.output
+        && !is_quiet
+    {
+        eprintln!("{}", format!("[*] {} valid emails successfully processed and saved to '{}'.", output_data.len(), output_file).white());
     }
 }
