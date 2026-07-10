@@ -1,4 +1,4 @@
-@startuml
+@startuml email_validator_flow
 skinparam conditionStyle inside
 skinparam ActivityBackgroundColor #f1f5f9
 skinparam ActivityBorderColor #475569

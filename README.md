@@ -122,19 +122,22 @@ cd doc && plantuml *.puml
 
 ## 🛠️ Developer Documentation
 
-Module-level docs for all internal types and functions are available as
-auto-generated HTML. Built and shipped with every release.
+Module-level docs for all internal types and functions.
 
 ### Browse Online
 
-👉 **[Developer Docs](../../releases/latest)** — download `email_validator_docs.tar.gz`
-from the latest release, extract, and open `email_validator_docs/email_validator/index.html`.
+👉 **[Developer Docs](https://evait-security.github.io/email_validator/email_validator/)** — live on GitHub Pages.
 
 ### Build Locally
 
 ```bash
 cargo doc --no-deps --open
 ```
+
+### Download
+
+A tarball of the docs is also attached to every [release](../../releases/latest)
+as `email_validator_docs.tar.gz`.
 
 This opens a local browser with docs for `ingestion`, `precheck`,
 `validation`, `output`, and all public types.
@@ -143,10 +146,13 @@ This opens a local browser with docs for `ingestion`, `precheck`,
 
 ## �📜 License
 
-This project is **free to use** — Public Domain / Unlicense.
+This project is licensed under the **MIT License**.
+
+- [Full license text](LICENSE)
+- [What MIT means (choosealicense.com)](https://choosealicense.com/licenses/mit/)
+
 You may copy, modify, distribute, and use it in your own projects
-(including commercial software) without restriction.
-No copyleft, no attribution required.
+(including commercial software) with proper attribution.
 
 ---
 

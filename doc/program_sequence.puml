@@ -1,4 +1,4 @@
-@startuml
+@startuml program_sequence
 skinparam SequenceLifeLineBackgroundColor #f1f5f9
 skinparam SequenceLifeLineBorderColor #475569
 skinparam SequenceBoxBackgroundColor #f8fafc
