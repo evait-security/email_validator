@@ -17,9 +17,9 @@ participant "output" as Out
 collections "External Services" as Ext
 
 == Startup ==
-User -> Main : email_validator -i file.txt -o out.csv -m smtp -f gophish
-Main -> Main : Cli::parse() → args, format, method, flags
-Main -> Main : is_quiet = Format::Gophish && !verbose
+User -> Main : email_validator -i file.txt -j -m smtp
+Main -> Main : Cli::parse() → args, json, method, flags
+Main -> Main : is_quiet = (Gophish OR Json) && !verbose
 
 == Phase 0: Ingestion ==
 Main -> Ing : run(&cli)
@@ -61,23 +61,30 @@ loop for each email
     end
   end
 end
-Val --> Main : Vec<String> valid_emails
+Val --> Main : Vec<ValidationResult> results (all emails)
 
 == Phase 3: Output ==
-Main -> Out : run(&cli, &valid_emails, is_quiet)
+Main -> Out : run(&cli, &results, is_quiet)
 alt output file (-o)
   Out -> Out : Create file writer
 else no -o
   Out -> Out : Use STDOUT
 end
-alt format == Gophish
-  Out -> Out : Write CSV (csv crate)
+alt json (-j)
+  Out -> Out : Serialize all results as JSON array
+  note right
+    [{"email":"a@b.de","valid":true},
+     {"email":"bogus","valid":false}]
+    catch_all field only when true
+  end note
+else format == Gophish
+  Out -> Out : Filter valid → Write CSV (csv crate)
   note right
     First Name,Last Name,Email,Position
     ,,user@example.com,
   end note
 else format == List
-  Out -> Out : Write one email per line
+  Out -> Out : Filter valid → Write one email per line
 end
 Out --> Main : done (exit 0)
 

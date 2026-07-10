@@ -20,6 +20,9 @@ email_validator -i mails.txt -m regex
 # GoPhish CSV output format
 email_validator -i mails.txt -o out.csv -f gophish
 
+# JSON output for n8n / API / automation
+email_validator -i mails.txt -j | jq
+
 # Via pipe (STDIN)
 cat mails.txt | email_validator -f list
 ```
@@ -51,6 +54,7 @@ chmod +x email_validator
 | `-o` | Output file (optional, STDOUT otherwise) | `—` |
 | `-m` | Validation method: `regex`, `mx`, `smtp` | `smtp` |
 | `-f` | Output format: `list`, `gophish` | `list` |
+| `-j` | JSON array output (conflicts with `-f`) | `false` |
 | `-d` | Disable wildcard domain check | `false` |
 | `-v` | Verbose mode | `false` |
 
@@ -66,7 +70,39 @@ chmod +x email_validator
 
 ---
 
-## 📋 Supported Input Formats
+## � Output Formats
+
+| Flag | Format | Includes |
+|------|--------|----------|
+| `-f list` (default) | One valid email per line | Valid only |
+| `-f gophish` | CSV: `First Name,Last Name,Email,Position` | Valid only |
+| `-j` / `--json` | JSON array | All emails (valid + invalid) |
+
+### JSON Output (`-j`)
+
+Designed for n8n, automation pipelines, and API consumption. Each email is an object
+with `email`, `valid`, and optionally `catch_all` (only present when `true`):
+
+```json
+[
+  { "email": "alice@example.com", "valid": true },
+  { "email": "bob@catch-all.tld", "valid": true, "catch_all": true },
+  { "email": "nobody@no-mx-xyz123.de", "valid": false }
+]
+```
+
+Use with `jq` for filtering and transformation:
+```bash
+# Extract only valid emails
+email_validator -i mails.txt -j -m smtp | jq '[.[] | select(.valid)]'
+
+# Pipe directly into n8n webhook
+email_validator -i mails.txt -j -o result.json
+```
+
+---
+
+## �📋 Supported Input Formats
 
 The regex parser reliably extracts emails from:
 
@@ -95,7 +131,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 upx --best --lzma target/x86_64-unknown-linux-musl/release/email_validator
 ```
 
-Run tests (30 total, all green ✅):
+Run tests (32 total, all green ✅):
 
 ```bash
 cargo test

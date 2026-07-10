@@ -10,13 +10,48 @@
 //!
 //! If a domain was flagged as catch-all in [`precheck`](crate::precheck), valid
 //! emails from that domain are marked with a warning but still included in output.
+//!
+//! # Output Structure
+//!
+//! Each email, regardless of validity, is returned as a [`ValidationResult`].
+//! This enables the JSON output format (`-j`) to include both valid and invalid
+//! emails, while the legacy list/gophish formats filter to valid-only in
+//! [`output`](crate::output).
 
 use std::collections::HashSet;
 use std::net::IpAddr;
 use colored::*;
 use check_if_email_exists::{check_email, CheckEmailInputBuilder, Reachable};
 use hickory_resolver::TokioAsyncResolver;
+use serde::Serialize;
 use crate::{Cli, Method};
+
+/// Result of validating a single email address.
+///
+/// Returned by [`run`] for every email in the input list. The [`valid`]
+/// field indicates whether the address passed the chosen validation method.
+/// For SMTP mode, [`catch_all`] is `true` when the domain was flagged as a
+/// catch-all / wildcard domain in [`precheck`](crate::precheck).
+///
+/// # JSON Serialization
+///
+/// When serialized via `serde_json`, the `catch_all` field is omitted if
+/// `false` to keep output compact:
+///
+/// ```json
+/// {"email":"a@b.de","valid":true,"catch_all":true}
+/// {"email":"bogus","valid":false}
+/// ```
+#[derive(Serialize, Clone, Debug)]
+pub struct ValidationResult {
+    /// The email address that was validated.
+    pub email: String,
+    /// `true` if the address passed validation.
+    pub valid: bool,
+    /// `true` if the domain is a catch-all (only set in SMTP mode).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub catch_all: bool,
+}
 
 /// Returns `true` if the IP address belongs to a private, loopback, or
 /// link-local range as defined by IETF RFC 1918, RFC 6598, RFC 5735, and
@@ -52,7 +87,11 @@ async fn resolves_to_private(hostname: &str, resolver: &TokioAsyncResolver) -> b
     }
 }
 
-/// Validate each email and return only those that pass.
+/// Validate each email and return a result for every input address.
+///
+/// Unlike previous versions, this now returns ALL emails (valid and invalid)
+/// wrapped in a [`ValidationResult`], so that JSON output can include failed
+/// addresses. Legacy list/gophish formats filter in [`output`](crate::output).
 ///
 /// # Parameters
 ///
@@ -63,11 +102,11 @@ async fn resolves_to_private(hostname: &str, resolver: &TokioAsyncResolver) -> b
 ///
 /// # Returns
 ///
-/// A `Vec<String>` of emails that passed validation, in original order.
-pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet<String>, is_quiet: bool) -> Vec<String> {
+/// A `Vec<ValidationResult>` for every input email, in original order.
+pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet<String>, is_quiet: bool) -> Vec<ValidationResult> {
     if !is_quiet { eprintln!("{}", format!("==> Phase 2: Validating Email List using method: {:?}...", cli.method).cyan()); }
     
-    let mut output_data: Vec<String> = Vec::new();
+    let mut output_data: Vec<ValidationResult> = Vec::new();
     let resolver_opt = if cli.method == Method::Mx || cli.method == Method::Smtp {
         Some(TokioAsyncResolver::tokio_from_system_conf().unwrap_or_else(|_| {
             TokioAsyncResolver::tokio(
@@ -104,12 +143,16 @@ pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet
                     if !is_quiet {
                         eprintln!("{}", format!("[-] Skipped {} (MX resolves to private IP)", email).yellow());
                     }
+                    output_data.push(ValidationResult { email: email.clone(), valid: false, catch_all: false });
                     continue;
                 }
 
                 let check_input = match CheckEmailInputBuilder::default().to_email(email.clone()).build() {
                     Ok(input) => input,
-                    Err(_) => continue,
+                    Err(_) => {
+                        output_data.push(ValidationResult { email: email.clone(), valid: false, catch_all: false });
+                        continue;
+                    }
                 };
                 let result = check_email(&check_input).await;
 
@@ -125,17 +168,20 @@ pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet
             }
         }
 
-        if is_valid {
-            output_data.push(email.clone());
-            if !is_quiet {
-                if is_catch_all_warning {
-                    eprintln!("{}", format!("[+] {} (Warning: Domain is Catch-All)", email).yellow());
-                } else {
-                    eprintln!("{}", format!("[+] {}", email).green());
-                }
+        output_data.push(ValidationResult {
+            email: email.clone(),
+            valid: is_valid,
+            catch_all: is_catch_all_warning,
+        });
+
+        if !is_quiet {
+            if is_valid && is_catch_all_warning {
+                eprintln!("{}", format!("[+] {} (Warning: Domain is Catch-All)", email).yellow());
+            } else if is_valid {
+                eprintln!("{}", format!("[+] {}", email).green());
+            } else {
+                eprintln!("{}", format!("[-] {}", email).red());
             }
-        } else {
-            if !is_quiet { eprintln!("{}", format!("[-] {}", email).red()); }
         }
     }
     

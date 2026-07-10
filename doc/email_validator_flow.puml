@@ -13,7 +13,7 @@ title Flowchart of the Rust Email Validator
 start
 
 :Parse CLI arguments with clap;
-:Determine 'is_quiet' (Format == Gophish AND NOT Verbose);
+:Determine 'is_quiet' ((Format == Gophish OR Json) AND NOT Verbose);
 
 partition "Phase 0: Data Ingestion" {
   if (Input file (-i) provided?) then (yes)
@@ -58,7 +58,7 @@ else (no)
 endif
 
 partition "Phase 2: Validating Email List" {
-  :Initialize empty vector 'valid_emails';
+  :Initialize empty vector 'validation_results';
   if (NOT is_quiet?) then (yes)
     :Log "Validating Email List" to STDERR;
   else (no)
@@ -76,21 +76,16 @@ partition "Phase 2: Validating Email List" {
       via check-if-email-exists;
     endif
 
-    if (Validation Successful?) then (yes)
-      :Add email to 'valid_emails';
-      if (NOT is_quiet?) then (yes)
-        if (Method == SMTP AND Domain in 'wildcard_domains'?) then (yes)
-          :Log to STDERR: [+] Email in Yellow (Catch-All);
-        else (no)
-          :Log to STDERR: [+] Email in Green;
-        endif
+    :Push ValidationResult {email, valid, catch_all};
+    if (NOT is_quiet?) then (yes)
+      if (valid AND Catch-All?) then (yes)
+        :Log to STDERR: [+] Email in Yellow;
+      elseif (valid?) then (yes)
+        :Log to STDERR: [+] Email in Green;
       else (no)
+        :Log to STDERR: [-] Email in Red;
       endif
     else (no)
-      if (NOT is_quiet?) then (yes)
-        :Log to STDERR: [-] Email in Red;
-      else (no)
-      endif
     endif
   endwhile (No more emails left)
 }
@@ -102,7 +97,10 @@ partition "Phase 3: Handle Output (Unified Stream)" {
     :Set Output Stream = STDOUT;
   endif
 
-  if (Format == Gophish?) then (yes)
+  if (JSON mode (-j)?) then (yes)
+    :Serialize ALL results as JSON array to Output Stream;
+    note right: includes valid=true + valid=false
+  elseif (Format == Gophish?) then (yes)
     :Write valid emails as CSV to Output Stream;
   else (List)
     :Write valid emails as text list to Output Stream;
