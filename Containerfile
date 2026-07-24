@@ -9,6 +9,8 @@ ARG ARCH=x86_64
 
 FROM cgr.dev/chainguard/wolfi-base:latest
 
+ARG ARCH=x86_64
+
 # Copy the statically-linked musl binary
 COPY target/${ARCH}-unknown-linux-musl/release/email_validator /usr/local/bin/email_validator
 
