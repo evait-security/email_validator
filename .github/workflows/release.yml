@@ -7,10 +7,11 @@ on:
 
 permissions:
   contents: write      # Required for uploading release assets
+  packages: write      # Required for pushing container images
 
 jobs:
   release:
-    name: Build static binary, docs, and create GitHub Release
+    name: Build static binary, container, docs, and create GitHub Release
     runs-on: ubuntu-latest
 
     steps:
@@ -20,11 +21,11 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y musl-tools plantuml
           rustup target add x86_64-unknown-linux-musl
 
-      - name: Run all tests (safety-gate)
-        run: cargo test --release
+      - name: Run all tests (safety-gate, skip network/SMTP tests)
+        run: cargo test --release -- --skip smtp
 
       - name: Build release binary (static musl)
         run: cargo build --release --target x86_64-unknown-linux-musl
@@ -34,11 +35,45 @@ jobs:
           sudo apt-get install -y upx-ucl
           upx --best --lzma target/x86_64-unknown-linux-musl/release/email_validator
 
+      - name: Generate diagrams (PlantUML)
+        run: |
+          cd doc
+          plantuml -tpng *.puml
+          cd ..
+
       - name: Generate developer docs
         run: |
           cargo doc --no-deps
           cp -r target/doc email_validator_docs
           tar -czf email_validator_docs.tar.gz email_validator_docs
+
+      - name: Compute SHA256 for binary
+        id: sha256
+        run: |
+          echo "hash=$(sha256sum target/x86_64-unknown-linux-musl/release/email_validator | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Update AUR PKGBUILD SHA256
+        run: |
+          sed -i "0,/sha256sums=('.*'/s/sha256sums=('[^']*'/sha256sums=('${{ steps.sha256.outputs.hash }}'/" aur/PKGBUILD
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push container image
+        uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
+        with:
+          context: .
+          file: Containerfile
+          build-args: |
+            ARCH=x86_64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
@@ -47,6 +82,8 @@ jobs:
           files: |
             target/x86_64-unknown-linux-musl/release/email_validator
             email_validator_docs.tar.gz
+            doc/email_validator_flow.png
+            doc/program_sequence.png
           generate_release_notes: true
           draft: false
           prerelease: false

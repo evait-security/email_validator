@@ -12,8 +12,44 @@ title Flowchart of the Rust Email Validator
 
 start
 
-:Parse CLI arguments with clap;
-:Determine 'is_quiet' ((Format == Gophish OR Json) AND NOT Verbose);
+:Parse CLI subcommand (clap);
+
+if (Subcommand?) then (api)
+  partition "API Server Mode" {
+    :Parse ApiArgs (bind_addr, verbose);
+    :Bind TCP listener at bind_addr
+    (default: 0.0.0.0:8080 or $BIND_ADDR);
+    :Start axum HTTP server;
+    :Wait for requests (loop);
+    if (GET /health?) then (yes)
+      :Return {"status":"ok","version":"..."};
+    elseif (GET /validate?email=...&method=...) then (yes)
+      :Parse query params → single email;
+    elseif (POST /validate) then (yes)
+      :Parse JSON body (axum Json extractor);
+      if (emails is empty?) then (yes)
+        :Return 400 {"error":"email list is empty"};
+        stop
+      elseif (emails > 1000?) then (yes)
+        :Return 400 {"error":"too many emails, max 1000"};
+        stop
+      else (no)
+        :Deduplicate (case-insensitive, to_lowercase);
+      endif
+    else (no)
+      :Return 404;
+    endif
+    :Run precheck → validation pipeline;
+    :Return JSON with summary
+    (total, valid_count, invalid_count,
+     catch_all_count, results[]);
+    detach
+  }
+  stop
+else (run)
+  :Parse RunArgs (input, output, format, method, ...);
+  :Determine 'is_quiet' ((Format == Gophish OR Json) AND NOT Verbose);
+endif
 
 partition "Phase 0: Data Ingestion" {
   if (Input file (-i) provided?) then (yes)

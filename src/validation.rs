@@ -4,7 +4,7 @@
 //!
 //! | Method | Behavior |
 //! |--------|----------|
-//! | [`Method::Regex`] | Always passes (syntax already verified in ingestion) |
+//! | [`Method::Regex`] | Syntax check via RFC-compliant regex |
 //! | [`Method::Mx`] | Performs DNS MX record lookup via Hickory resolver |
 //! | [`Method::Smtp`] | Full SMTP handshake via `check-if-email-exists` |
 //!
@@ -20,11 +20,18 @@
 
 use std::collections::HashSet;
 use std::net::IpAddr;
+use std::sync::LazyLock;
 use colored::*;
 use check_if_email_exists::{check_email, CheckEmailInputBuilder, Reachable};
 use hickory_resolver::TokioAsyncResolver;
+use regex::Regex;
 use serde::Serialize;
-use crate::{Cli, Method};
+use crate::Method;
+
+/// Compiled regex for email syntax validation (same as ingestion).
+static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$").unwrap()
+});
 
 /// Result of validating a single email address.
 ///
@@ -95,7 +102,8 @@ async fn resolves_to_private(hostname: &str, resolver: &TokioAsyncResolver) -> b
 ///
 /// # Parameters
 ///
-/// * `cli` — CLI arguments (determines method, wildcard flag)
+/// * `method` — Validation method (`Regex`, `Mx`, or `Smtp`)
+/// * `disable_wildcard` — Skip wildcard-flagging if true
 /// * `unique_emails` — Deduplicated list from Phase 0
 /// * `wildcard_domains` — Set of catch-all domains from Phase 1
 /// * `is_quiet` — Suppress per-email STDERR output if true
@@ -103,11 +111,11 @@ async fn resolves_to_private(hostname: &str, resolver: &TokioAsyncResolver) -> b
 /// # Returns
 ///
 /// A `Vec<ValidationResult>` for every input email, in original order.
-pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet<String>, is_quiet: bool) -> Vec<ValidationResult> {
-    if !is_quiet { eprintln!("{}", format!("==> Phase 2: Validating Email List using method: {:?}...", cli.method).cyan()); }
+pub async fn run(method: Method, disable_wildcard: bool, unique_emails: &[String], wildcard_domains: &HashSet<String>, is_quiet: bool, _concurrency: Option<usize>) -> Vec<ValidationResult> {
+    if !is_quiet { eprintln!("{}", format!("==> Phase 2: Validating Email List using method: {:?}...", method).cyan()); }
     
     let mut output_data: Vec<ValidationResult> = Vec::new();
-    let resolver_opt = if cli.method == Method::Mx || cli.method == Method::Smtp {
+    let resolver_opt = if method == Method::Mx || method == Method::Smtp {
         Some(TokioAsyncResolver::tokio_from_system_conf().unwrap_or_else(|_| {
             TokioAsyncResolver::tokio(
                 hickory_resolver::config::ResolverConfig::default(),
@@ -123,9 +131,9 @@ pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet
         let mut is_valid = false;
         let mut is_catch_all_warning = false;
 
-        match cli.method {
+        match method {
             Method::Regex => {
-                is_valid = true;
+                is_valid = EMAIL_RE.is_match(email);
             },
             Method::Mx => {
                 if let Some(resolver) = &resolver_opt
@@ -159,7 +167,7 @@ pub async fn run(cli: &Cli, unique_emails: &[String], wildcard_domains: &HashSet
                 match result.is_reachable {
                     Reachable::Safe | Reachable::Risky => {
                         is_valid = true;
-                        if !cli.disable_wildcard && wildcard_domains.contains(domain) {
+                        if !disable_wildcard && wildcard_domains.contains(domain) {
                             is_catch_all_warning = true;
                         }
                     },

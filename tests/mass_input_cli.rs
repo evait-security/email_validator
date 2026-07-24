@@ -24,6 +24,7 @@ fn test_mass_mixed_input_regex_cli() {
 
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -61,6 +62,7 @@ fn test_mass_markdown_input_regex_cli() {
 
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -116,6 +118,7 @@ fn test_mass_markdown_flat_string_regex_cli() {
 
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -145,6 +148,7 @@ fn test_mass_xml_input_regex_cli() {
 
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -187,6 +191,7 @@ fn test_mass_xml_flat_string_regex_cli() {
 
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -222,6 +227,7 @@ fn test_markdown_no_panic_on_malformed_syntax() {
     let input = create_input_file_raw(payload);
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -252,6 +258,7 @@ fn test_xml_no_panic_on_malformed_syntax() {
     let input = create_input_file_raw(payload);
     let output = Command::cargo_bin("email_validator")
         .unwrap()
+        .arg("run")
         .arg("-i")
         .arg(input.path())
         .arg("-m")
@@ -266,4 +273,47 @@ fn test_xml_no_panic_on_malformed_syntax() {
     assert_sorted_and_unique(&parsed);
     assert!(parsed.contains(&"ok@z.de".to_string()));
     assert!(parsed.contains(&"test2@y.com".to_string()));
+}
+
+// ── CLI JSON output test ─────────────────────────────────────────
+
+#[test]
+fn test_cli_json_output_format() {
+    // mix of regex-extractable emails, one non-extractable "bogus", and duplicates
+    let lines = vec![
+        "alice@example.com".to_string(),
+        "bogus".to_string(),                     // not regex-extractable — drops in ingestion
+        "bob@test.de".to_string(),
+        "alice@example.com".to_string(),          // duplicate — deduped
+    ];
+    let input = create_input_file(&lines);
+
+    let output = Command::cargo_bin("email_validator")
+        .unwrap()
+        .arg("run")
+        .arg("-i")
+        .arg(input.path())
+        .arg("-m")
+        .arg("regex")
+        .arg("-j")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout_str).unwrap();
+    assert!(json.is_array(), "JSON output should be an array");
+    let arr = json.as_array().unwrap();
+
+    // ingestion extracts only regex-matching emails; "bogus" is dropped before validation.
+    // We get 2 results: alice (deduped) + bob.
+    assert_eq!(arr.len(), 2, "CLI ingestion drops non-extractable tokens before validation");
+
+    let mut emails: Vec<&str> = arr.iter().map(|r| r["email"].as_str().unwrap()).collect();
+    emails.sort();
+    assert_eq!(emails, vec!["alice@example.com", "bob@test.de"]);
+
+    let valid_count = arr.iter().filter(|r| r["valid"].as_bool().unwrap()).count();
+    assert_eq!(valid_count, 2);
 }

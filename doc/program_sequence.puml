@@ -6,10 +6,11 @@ skinparam SequenceBoxBorderColor #64748b
 skinparam ParticipantBackgroundColor #e2e8f0
 skinparam ParticipantBorderColor #475569
 
-title Email Validator — Program Sequence
+title Email Validator — Program Sequence (CLI + API)
 
 actor User
 participant "main()" as Main
+participant "server" as Svr
 participant "ingestion" as Ing
 participant "precheck" as Pre
 participant "validation" as Val
@@ -17,19 +18,64 @@ participant "output" as Out
 collections "External Services" as Ext
 
 == Startup ==
-User -> Main : email_validator -i file.txt -j -m smtp
-Main -> Main : Cli::parse() → args, json, method, flags
-Main -> Main : is_quiet = (Gophish OR Json) && !verbose
+User -> Main : email_validator <run|api> [args]
+Main -> Main : Cli::parse() → Command enum
 
-== Phase 0: Ingestion ==
-Main -> Ing : run(&cli)
-Ing -> Ing : Read file or STDIN → raw string
-Ing -> Ing : extract_and_deduplicate(raw)
-note right
-  Regex: (?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}
-  → find_iter → sort → dedup
-end note
-Ing --> Main : Vec<String> unique_emails
+alt Subcommand = api
+  Main -> Svr : run(bind_addr, verbose)
+  note right
+    bind_addr: CLI arg, $BIND_ADDR env,
+    or default 0.0.0.0:8080
+  end note
+  Svr -> Svr : TcpListener::bind(bind_addr)
+  Svr -> Svr : Router: /validate, /health
+  Svr -> Svr : axum::serve(listener, app)
+  note over Svr: Server running — awaiting requests
+
+  == API: GET /health ==
+  User -> Svr : GET /health
+  Svr --> User : 200 {"status":"ok","version":"0.3.0"}
+
+  == API: POST /validate ==
+  User -> Svr : POST /validate {"emails":[...], "method":"regex"}
+  Svr -> Svr : Validate: empty? → 400, >1000? → 400
+  Svr -> Svr : Deduplicate (case-insensitive, to_lowercase)
+  Svr -> Pre : precheck::run(method, disable_wildcard, verbose, &emails, is_quiet, None)
+  note right
+    is_quiet = !verbose in API mode
+    No STDERR noise in server context
+  end note
+  Pre --> Svr : HashSet<String> wildcard_domains
+  Svr -> Val : validation::run(method, disable_wildcard, &emails, &wildcard_domains, is_quiet, None)
+  note right
+    Method::Regex now validates via
+    EMAIL_RE.is_match(email) — not blind true
+  end note
+  Val --> Svr : Vec<ValidationResult>
+  Svr -> Svr : build_response(results)
+  note right
+    {"total": N, "valid_count": n, "invalid_count": m,
+     "catch_all_count": k, "results": [...]}
+  end note
+  Svr --> User : 200 JSON
+
+  == API: GET /validate ==
+  User -> Svr : GET /validate?email=a@b.de&method=regex
+  Svr -> Svr : Same pipeline as POST (single email)
+  Svr --> User : 200 JSON
+
+else Subcommand = run
+  Main -> Main : is_quiet = (Gophish OR Json) && !verbose
+
+  == Phase 0: Ingestion ==
+  Main -> Ing : run(&args)
+  Ing -> Ing : Read file or STDIN → raw string
+  Ing -> Ing : extract_and_deduplicate(raw)
+  note right
+    Regex: (?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}
+    → find_iter → to_lowercase → sort → dedup
+  end note
+  Ing --> Main : Vec<String> unique_emails
 
 == Phase 1: Wildcard Pre-Check ==
 Main -> Pre : run(&cli, &unique_emails, is_quiet)
@@ -46,10 +92,10 @@ end
 Pre --> Main : HashSet<String> wildcard_domains
 
 == Phase 2: Validation ==
-Main -> Val : run(&cli, &unique_emails, &wildcard_domains, is_quiet)
+Main -> Val : run(method, disable_wildcard, &unique_emails, &wildcard_domains, is_quiet, None)
 loop for each email
   alt method == Regex
-    Val -> Val : mark valid (no lookup)
+    Val -> Val : EMAIL_RE.is_match(email) → valid
   else method == MX
     Val -> Ext : hickory-resolver MX lookup
     Ext --> Val : MX records found? → valid

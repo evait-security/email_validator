@@ -25,12 +25,14 @@
 //! cargo doc --no-deps --open
 //! ```
 
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
+use serde::Deserialize;
 
 pub mod ingestion;
 pub mod precheck;
 pub mod validation;
 pub mod output;
+pub mod server;
 
 /// Command-line interface definition.
 ///
@@ -52,22 +54,36 @@ pub mod output;
 ///
 /// ```bash
 /// # Simple regex validation, list output
-/// email_validator -i mails.txt -m regex
+/// email_validator run -i mails.txt -m regex
 ///
 /// # SMTP validation with GoPhish CSV output
-/// email_validator -i mails.txt -o out.csv -f gophish
+/// email_validator run -i mails.txt -o out.csv -f gophish
 ///
-/// # JSON output for n8n / automation pipelines
-/// email_validator -i mails.txt -j | jq
+/// # JSON output for scripting / automation pipelines
+/// email_validator run -i mails.txt -j | jq
 ///
 /// # Read from STDIN, write to file
-/// cat mails.txt | email_validator -o clean.txt
+/// cat mails.txt | email_validator run -o clean.txt
 /// ```
 #[derive(Parser, Debug)]
 #[command(name = "verify")]
 #[command(about = "E-Mail list validator written in Rust", long_about = None)]
-#[command(after_help = "Examples:\n  # default config (smtp validation and list output)\n  email_validator -i input_emails.txt -o verified_emails.txt\n\n  # smtp validation and csv gophish output\n  email_validator -i input_emails.txt -o verified_emails.csv -f gophish\n\n  # regex validation only and csv gophish output\n  email_validator -i input_emails.txt -o verified_emails.csv -f gophish -m regex\n\n  # JSON output for n8n / automation\n  email_validator -i input_emails.txt -j -o result.json\n\n  # using the pipe, no output file, only stdout\n  cat /tmp/mails.txt | email_validator -f gophish")]
+#[command(after_help = "Examples:\n  # CLI pipeline: default config (smtp validation, list output)\n  email_validator run -i input_emails.txt -o verified_emails.txt\n\n  # smtp validation and csv gophish output\n  email_validator run -i input_emails.txt -o verified_emails.csv -f gophish\n\n  # regex validation only and csv gophish output\n  email_validator run -i input_emails.txt -o verified_emails.csv -f gophish -m regex\n\n  # JSON output for scripting / automation\n  email_validator run -i input_emails.txt -j -o result.json\n\n  # using the pipe, no output file, only stdout\n  cat /tmp/mails.txt | email_validator run -f gophish\n\n  # Start API server (default: 0.0.0.0:8080)\n  email_validator api\n\n  # API server on custom port\n  email_validator api 127.0.0.1:3000\n\n  # API server via env var\n  BIND_ADDR=0.0.0.0:9000 email_validator api")]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Run the CLI pipeline (file/STDIN in → file/STDOUT out)
+    Run(RunArgs),
+    /// Start HTTP API server for email validation
+    Api(ApiArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct RunArgs {
     /// Input file path. Reads from STDIN if not provided.
     #[arg(short, long)]
     pub input: Option<String>,
@@ -97,6 +113,16 @@ pub struct Cli {
     pub verbose: bool,
 }
 
+#[derive(Parser, Debug)]
+pub struct ApiArgs {
+    /// Bind address. Defaults to 0.0.0.0:8080, overridable via $BIND_ADDR.
+    #[arg(default_value = "0.0.0.0:8080", env = "BIND_ADDR")]
+    pub bind_addr: String,
+    /// Verbose STDERR logging
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
 /// Output format for validated emails.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 pub enum Format {
@@ -107,7 +133,8 @@ pub enum Format {
 }
 
 /// Validation method used in Phase 2.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug, serde::Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Method {
     /// Syntax check only via RFC-compliant regex. No network required.
     Regex,
@@ -119,22 +146,28 @@ pub enum Method {
 
 /// Program entry point.
 ///
-/// 1. Parse CLI
-/// 2. [`ingestion::run`] — extract deduplicated emails
-/// 3. [`precheck::run`] — detect wildcard domains
-/// 4. [`validation::run`] — validate emails (returns `Vec<ValidationResult>`)
-/// 5. [`output::run`] — write results
+/// 1. Parse CLI subcommand (`run` or `api`)
+/// 2. `run`: ingest → precheck → validate → output
+/// 3. `api`: start HTTP server
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    let is_quiet = (cli.format == Format::Gophish || cli.json) && !cli.verbose;
 
-    // Orchestrator: Semantic and clean function calls
-    let unique_emails = ingestion::run(&cli);
-    let wildcard_domains = precheck::run(&cli, &unique_emails, is_quiet).await;
-    let validation_results = validation::run(&cli, &unique_emails, &wildcard_domains, is_quiet).await;
-    
-    output::run(&cli, &validation_results, is_quiet);
+    match cli.command {
+        Command::Run(args) => {
+            let is_quiet = (args.format == Format::Gophish || args.json) && !args.verbose;
+
+            // Orchestrator: Semantic and clean function calls
+            let unique_emails = ingestion::run(&args);
+            let wildcard_domains = precheck::run(args.method, args.disable_wildcard, args.verbose, &unique_emails, is_quiet, None).await;
+            let validation_results = validation::run(args.method, args.disable_wildcard, &unique_emails, &wildcard_domains, is_quiet, None).await;
+            
+            output::run(&args, &validation_results, is_quiet);
+        }
+        Command::Api(args) => {
+            server::run(&args.bind_addr, args.verbose).await
+        }
+    }
 }
 
 #[cfg(test)]
@@ -149,22 +182,23 @@ mod tests {
 
     #[test]
     fn test_cli_default_values() {
-        let args = vec!["email_validator", "-i", "list.txt"];
+        let args = vec!["email_validator", "run", "-i", "list.txt"];
         let cli = Cli::parse_from(args);
+        let Command::Run(args) = cli.command else { panic!("expected Run") };
         
-        assert_eq!(cli.input.unwrap(), "list.txt");
-        assert_eq!(cli.output, None);
-        assert_eq!(cli.format, Format::List);
-        assert!(!cli.json);
-        assert_eq!(cli.method, Method::Smtp);
-        assert_eq!(cli.disable_wildcard, false);
-        assert_eq!(cli.verbose, false);
+        assert_eq!(args.input.unwrap(), "list.txt");
+        assert_eq!(args.output, None);
+        assert_eq!(args.format, Format::List);
+        assert!(!args.json);
+        assert_eq!(args.method, Method::Smtp);
+        assert_eq!(args.disable_wildcard, false);
+        assert_eq!(args.verbose, false);
     }
 
     #[test]
     fn test_cli_custom_flags_and_options() {
         let args = vec![
-            "email_validator", 
+            "email_validator", "run",
             "-i", "in.txt", 
             "-o", "out.csv", 
             "-f", "gophish", 
@@ -173,41 +207,61 @@ mod tests {
             "-v"
         ];
         let cli = Cli::parse_from(args);
+        let Command::Run(args) = cli.command else { panic!("expected Run") };
         
-        assert_eq!(cli.input.unwrap(), "in.txt");
-        assert_eq!(cli.output.unwrap(), "out.csv");
-        assert_eq!(cli.format, Format::Gophish);
-        assert!(!cli.json);
-        assert_eq!(cli.method, Method::Regex);
-        assert!(cli.disable_wildcard);
-        assert!(cli.verbose);
+        assert_eq!(args.input.unwrap(), "in.txt");
+        assert_eq!(args.output.unwrap(), "out.csv");
+        assert_eq!(args.format, Format::Gophish);
+        assert!(!args.json);
+        assert_eq!(args.method, Method::Regex);
+        assert!(args.disable_wildcard);
+        assert!(args.verbose);
     }
 
     #[test]
     fn test_cli_json_flag() {
         let args = vec![
-            "email_validator", 
+            "email_validator", "run",
             "-i", "in.txt", 
             "-j",
             "-m", "regex",
         ];
         let cli = Cli::parse_from(args);
+        let Command::Run(args) = cli.command else { panic!("expected Run") };
         
-        assert_eq!(cli.input.unwrap(), "in.txt");
-        assert!(cli.json);
-        assert_eq!(cli.format, Format::List);
-        assert_eq!(cli.method, Method::Regex);
+        assert_eq!(args.input.unwrap(), "in.txt");
+        assert!(args.json);
+        assert_eq!(args.format, Format::List);
+        assert_eq!(args.method, Method::Regex);
     }
 
     #[test]
     fn test_cli_json_conflicts_with_format() {
         let args = vec![
-            "email_validator", 
+            "email_validator", "run",
             "-i", "in.txt", 
             "-j",
             "-f", "gophish",
         ];
         let result = Cli::try_parse_from(args);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_api_args_default() {
+        let args = vec!["email_validator", "api", "127.0.0.1:8080"];
+        let cli = Cli::parse_from(args);
+        let Command::Api(args) = cli.command else { panic!("expected Api") };
+        assert_eq!(args.bind_addr, "127.0.0.1:8080");
+        assert!(!args.verbose);
+    }
+
+    #[test]
+    fn test_cli_api_args_verbose() {
+        let args = vec!["email_validator", "api", "0.0.0.0:3000", "-v"];
+        let cli = Cli::parse_from(args);
+        let Command::Api(args) = cli.command else { panic!("expected Api") };
+        assert_eq!(args.bind_addr, "0.0.0.0:3000");
+        assert!(args.verbose);
     }
 }
