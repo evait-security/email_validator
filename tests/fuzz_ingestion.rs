@@ -223,6 +223,7 @@ proptest! {
         let input = create_input_file(&tokens);
         let output = Command::cargo_bin("email_validator")
             .unwrap()
+            .arg("run")
             .arg("-i")
             .arg(input.path())
             .arg("-m")
@@ -260,6 +261,7 @@ proptest! {
         let input = create_input_file(&tokens);
         let output = Command::cargo_bin("email_validator")
             .unwrap()
+            .arg("run")
             .arg("-i")
             .arg(input.path())
             .arg("-m")
@@ -294,6 +296,7 @@ proptest! {
         let input = create_input_file_raw(&md_content);
         let output = Command::cargo_bin("email_validator")
             .unwrap()
+            .arg("run")
             .arg("-i")
             .arg(input.path())
             .arg("-m")
@@ -337,6 +340,7 @@ proptest! {
         let input = create_input_file(&tokens);
         let output = Command::cargo_bin("email_validator")
             .unwrap()
+            .arg("run")
             .arg("-i")
             .arg(input.path())
             .arg("-m")
@@ -368,6 +372,7 @@ proptest! {
         let input = create_input_file_raw(&xml_content);
         let output = Command::cargo_bin("email_validator")
             .unwrap()
+            .arg("run")
             .arg("-i")
             .arg(input.path())
             .arg("-m")

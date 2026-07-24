@@ -1,10 +1,11 @@
 # 📧 Email Validator
 
-> Fast, statically linked email list validator in Rust — zero runtime overhead.
+> Fast, statically linked email list validator in Rust — CLI pipeline & HTTP API.
 
 **Email Validator** extracts, deduplicates, and validates email addresses from any
 text source (TXT, Markdown, XML, CSV, STDIN pipes). Three validation modes:
-regex only, MX lookup, or full SMTP handshake.
+regex only, MX lookup, or full SMTP handshake. Ships as a single static binary
+with both a **CLI pipeline** and a built-in **HTTP API server**.
 
 ---
 
@@ -12,27 +13,118 @@ regex only, MX lookup, or full SMTP handshake.
 
 ```bash
 # Simplest usage: file in, validated list out
-email_validator -i input.txt -o verified.txt
+email_validator run -i input.txt -o verified.txt
 
 # Regex-only validation (no network)
-email_validator -i mails.txt -m regex
+email_validator run -i mails.txt -m regex
 
 # GoPhish CSV output format
-email_validator -i mails.txt -o out.csv -f gophish
+email_validator run -i mails.txt -o out.csv -f gophish
 
-# JSON output for n8n / API / automation
-email_validator -i mails.txt -j | jq
+# JSON output for scripting / automation
+email_validator run -i mails.txt -j | jq
 
 # Via pipe (STDIN)
-cat mails.txt | email_validator -f list
+cat mails.txt | email_validator run -f list
 ```
+
+---
+
+## 🌐 HTTP API Server
+
+The binary includes a built-in HTTP API via the `api` subcommand:
+
+```bash
+# Start the server (defaults to 0.0.0.0:8080)
+email_validator api
+
+# Custom bind address
+email_validator api 127.0.0.1:3000
+
+# Or via environment variable
+BIND_ADDR=0.0.0.0:9000 email_validator api
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check — returns `{"status":"ok","version":"0.4.0"}` |
+| `GET` | `/validate?email=…&method=…` | Validate a single email |
+| `POST` | `/validate` | Batch validate up to 1000 emails |
+
+### POST `/validate` Request
+
+```json
+{
+  "emails": ["alice@example.com", "bogus", "bob@test.de"],
+  "method": "regex",
+  "disable_wildcard": false
+}
+```
+
+### Response
+
+```json
+{
+  "total": 3,
+  "valid_count": 2,
+  "invalid_count": 1,
+  "catch_all_count": 0,
+  "results": [
+    { "email": "alice@example.com", "valid": true },
+    { "email": "bogus", "valid": false },
+    { "email": "bob@test.de", "valid": true }
+  ]
+}
+```
+
+- Emails are **deduplicated case-insensitively** before validation
+- **Max 1000 emails** per request — returns HTTP 400 if exceeded
+- Empty list returns HTTP 400
+- `method` and `disable_wildcard` are optional (default: `smtp` / `false`)
+
+---
+
+## 🐳 Docker / Wolfi
+
+```dockerfile
+# Containerfile
+FROM cgr.dev/chainguard/wolfi-base:latest
+COPY email_validator /usr/local/bin/email_validator
+EXPOSE 8080
+USER nonroot
+ENTRYPOINT ["email_validator", "api"]
+```
+
+```yaml
+# docker-compose.yml
+services:
+  email-validator:
+    image: ghcr.io/evait-security/email_validator:latest
+    ports:
+      - "8080:8080"          # Host:Container
+    restart: unless-stopped
+    read_only: true
+
+  # Optional: auto-update container on new releases
+  watchtower:
+    image: containrrr/watchtower:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 300 email-validator
+    restart: unless-stopped
+```
+
+The image is built automatically on every release and pushed to
+`ghcr.io/evait-security/email_validator`. Add Watchtower to auto-update.
 
 ---
 
 ## 📥 Download (Standalone Binary)
 
-The binary is **statically linked** (musl), **compressed with UPX**, and runs on
-**any Linux x86_64** — Alpine, Arch, Debian, Ubuntu, CentOS, embedded systems.
+The binary is **statically linked** (musl) and runs on **any Linux x86_64** —
+Alpine, Wolfi, Arch, Debian, Ubuntu, CentOS, embedded systems.
 No glibc, no runtime dependencies.
 
 👉 **[Download latest release](../../releases/latest)**
@@ -41,12 +133,14 @@ Simply make it executable and go:
 
 ```bash
 chmod +x email_validator
-./email_validator -i emails.txt -o clean.txt
+./email_validator run -i emails.txt -o clean.txt
 ```
 
 ---
 
-## 🛠️ Options
+## 🛠️ CLI Reference
+
+### `email_validator run` — CLI Pipeline
 
 | Flag | Description | Default |
 |------|-------------|---------|
@@ -57,6 +151,20 @@ chmod +x email_validator
 | `-j` | JSON array output (conflicts with `-f`) | `false` |
 | `-d` | Disable wildcard domain check | `false` |
 | `-v` | Verbose mode | `false` |
+
+### `email_validator api` — HTTP Server
+
+| Arg / Env | Description | Default |
+|-----------|-------------|---------|
+| `[BIND_ADDR]` | Address to bind (positional or `$BIND_ADDR` env) | `0.0.0.0:8080` |
+| `-v` | Verbose STDERR logging | `false` |
+
+```bash
+# All equivalent:
+email_validator api
+email_validator api 127.0.0.1:3000
+BIND_ADDR=127.0.0.1:3000 email_validator api
+```
 
 ---
 
@@ -80,7 +188,7 @@ chmod +x email_validator
 
 ### JSON Output (`-j`)
 
-Designed for n8n, automation pipelines, and API consumption. Each email is an object
+Designed for scripting, automation pipelines, and API consumption. Each email is an object
 with `email`, `valid`, and optionally `catch_all` (only present when `true`):
 
 ```json
@@ -96,7 +204,7 @@ Use with `jq` for filtering and transformation:
 # Extract only valid emails
 email_validator -i mails.txt -j -m smtp | jq '[.[] | select(.valid)]'
 
-# Pipe directly into n8n webhook
+# Pipe directly into a webhook or file
 email_validator -i mails.txt -j -o result.json
 ```
 
@@ -131,7 +239,7 @@ cargo build --release --target x86_64-unknown-linux-musl
 upx --best --lzma target/x86_64-unknown-linux-musl/release/email_validator
 ```
 
-Run tests (32 total, all green ✅):
+Run tests (53 total, all green ✅):
 
 ```bash
 cargo test
@@ -197,5 +305,6 @@ You may copy, modify, distribute, and use it in your own projects
 - **Rust** (Edition 2024)
 - **musl** — fully static linking
 - **UPX** — binary compression for minimal download size
+- **axum** — HTTP API server
 - **Property-Based Testing** via `proptest` for fuzzing Markdown/XML/noise inputs
 - **CI/CD** via GitHub Actions (tests + automatic release)

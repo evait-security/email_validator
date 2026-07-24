@@ -10,7 +10,7 @@
 use std::collections::HashSet;
 use colored::*;
 use check_if_email_exists::{check_email, CheckEmailInputBuilder, Reachable};
-use crate::{Cli, Method};
+use crate::Method;
 
 /// Run wildcard pre-check on all unique domains.
 ///
@@ -18,14 +18,22 @@ use crate::{Cli, Method};
 /// If the server reports the address as reachable, the domain is added
 /// to the returned set.
 ///
+/// # Parameters
+///
+/// * `method` — Validation method (only SMTP triggers precheck)
+/// * `disable_wildcard` — Skip wildcard detection if true
+/// * `verbose` — Print per-domain progress to STDERR
+/// * `unique_emails` — Deduplicated list from Phase 0
+/// * `is_quiet` — Suppress STDERR output if true
+///
 /// # Returns
 ///
 /// A `HashSet<String>` of domains that accept any recipient (catch-all behavior).
 /// Empty if method is not SMTP or wildcard detection is disabled.
-pub async fn run(cli: &Cli, unique_emails: &[String], is_quiet: bool) -> HashSet<String> {
+pub async fn run(method: Method, disable_wildcard: bool, verbose: bool, unique_emails: &[String], is_quiet: bool, _concurrency: Option<usize>) -> HashSet<String> {
     let mut wildcard_domains = HashSet::new();
 
-    if cli.method != Method::Smtp || cli.disable_wildcard {
+    if method != Method::Smtp || disable_wildcard {
         return wildcard_domains;
     }
 
@@ -39,7 +47,7 @@ pub async fn run(cli: &Cli, unique_emails: &[String], is_quiet: bool) -> HashSet
     if !is_quiet { eprintln!("{}", "==> Phase 1: Running Wildcard Pre-Check Detection...".cyan()); }
     
     for domain in unique_domains {
-        if cli.verbose { eprint!("[*] Testing wildcard setup for domain: {}\r", domain); }
+        if verbose { eprint!("[*] Testing wildcard setup for domain: {}\r", domain); }
 
         let test_email = format!("dlfAxs7TGR91OhmWCbDiqtpcwEEARRJf@{}", domain);
         let check_input = CheckEmailInputBuilder::default().to_email(test_email).build().unwrap();
@@ -51,7 +59,7 @@ pub async fn run(cli: &Cli, unique_emails: &[String], is_quiet: bool) -> HashSet
                 wildcard_domains.insert(domain);
             }
             _ => {
-                if cli.verbose { eprint!("[+] Domain '{}' handles missing accounts correctly.\r", domain); }
+                if verbose { eprint!("[+] Domain '{}' handles missing accounts correctly.\r", domain); }
             }
         }
     }

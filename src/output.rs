@@ -17,7 +17,7 @@
 use std::fs::File;
 use std::io::{self, Write};
 use colored::*;
-use crate::{Cli, Format};
+use crate::{RunArgs, Format};
 use crate::validation::ValidationResult;
 
 /// Write validation results to the output destination.
@@ -26,8 +26,8 @@ use crate::validation::ValidationResult;
 ///
 /// If the output stream breaks (e.g. `email_validator ... | head -5`),
 /// the write loop exits silently without error.
-pub fn run(cli: &Cli, output_data: &[ValidationResult], is_quiet: bool) {
-    let mut dest: Box<dyn Write> = match &cli.output {
+pub fn run(args: &RunArgs, output_data: &[ValidationResult], is_quiet: bool) {
+    let mut dest: Box<dyn Write> = match &args.output {
         Some(output_file) => Box::new(File::create(output_file).unwrap_or_else(|e| {
             eprintln!("{}", format!("[!] Error creating output file: {}", e).red());
             std::process::exit(1);
@@ -35,14 +35,14 @@ pub fn run(cli: &Cli, output_data: &[ValidationResult], is_quiet: bool) {
         None => Box::new(io::stdout()),
     };
 
-    if cli.json {
+    if args.json {
         // JSON output: serialize ALL results (valid + invalid)
         if serde_json::to_writer_pretty(&mut dest, output_data).is_err() {
             // Pipe broken — exit silently
         }
         let _ = writeln!(dest);
     } else {
-        match cli.format {
+        match args.format {
             Format::Gophish => {
                 let mut wtr = csv::Writer::from_writer(&mut dest);
                 let _ = wtr.write_record(["First Name", "Last Name", "Email", "Position"]);
@@ -61,7 +61,7 @@ pub fn run(cli: &Cli, output_data: &[ValidationResult], is_quiet: bool) {
         }
     }
 
-    if let Some(output_file) = &cli.output
+    if let Some(output_file) = &args.output
         && !is_quiet
     {
         let valid_count = output_data.iter().filter(|r| r.valid).count();

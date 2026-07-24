@@ -22,6 +22,7 @@ fn test_boundary_nested_subdomains_happy_path() {
     ]);
 
     let mut cmd = Command::cargo_bin("email_validator").unwrap();
+    cmd.arg("run");
     cmd.arg("-i").arg(input.path())
        .arg("-m").arg("regex")
        .arg("-f").arg("list");
@@ -39,6 +40,7 @@ fn test_boundary_smtp_network_timeout_mitigation() {
     let input = create_clean_input_file(&["shadow@spoofeddomain.local"]);
 
     let mut cmd = Command::cargo_bin("email_validator").unwrap();
+    cmd.arg("run");
     cmd.arg("-i").arg(input.path())
        .arg("-m").arg("smtp");
 
@@ -54,6 +56,7 @@ fn test_boundary_quiet_mode_gophish_csv_streaming() {
     let input = create_clean_input_file(&["clean-target@testdomain.local"]);
 
     let mut cmd = Command::cargo_bin("email_validator").unwrap();
+    cmd.arg("run");
     cmd.arg("-i").arg(input.path())
        .arg("-m").arg("regex") // testing format stream logic speed
        .arg("-f").arg("gophish");
@@ -75,6 +78,7 @@ fn test_boundary_duplicate_filtration_across_pipeline() {
     ]);
 
     let mut cmd = Command::cargo_bin("email_validator").unwrap();
+    cmd.arg("run");
     cmd.arg("-i").arg(input.path())
        .arg("-m").arg("regex")
        .arg("-f").arg("list");

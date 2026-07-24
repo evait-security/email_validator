@@ -14,7 +14,7 @@ use std::io::{self, Read};
 use std::collections::HashSet;
 use colored::*;
 use regex::Regex;
-use crate::Cli;
+use crate::RunArgs;
 
 /// Maximum total input size in bytes (10 MB).
 const MAX_INPUT_SIZE: u64 = 10 * 1024 * 1024;
@@ -65,7 +65,7 @@ pub fn extract_and_deduplicate(input: &str) -> Vec<String> {
 ///
 /// Does not panic — exits the process gracefully with status 1 on file errors
 /// or status 0 when no valid emails are found.
-pub fn run(cli: &Cli) -> Vec<String> {
+pub fn run(args: &RunArgs) -> Vec<String> {
     let email_regex = Regex::new(r"(?i)[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}").unwrap();
     let mut unique_emails: HashSet<String> = HashSet::new();
     let mut total_bytes_read: u64 = 0;
@@ -78,7 +78,7 @@ pub fn run(cli: &Cli) -> Vec<String> {
         }
     };
 
-    if let Some(input_file) = &cli.input {
+    if let Some(input_file) = &args.input {
         let mut file = match File::open(input_file) {
             Ok(f) => f,
             Err(_) => {
