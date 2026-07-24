@@ -49,7 +49,7 @@ BIND_ADDR=0.0.0.0:9000 email_validator api
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/health` | Health check — returns `{"status":"ok","version":"0.4.0"}` |
+| `GET` | `/health` | Health check — returns `{"status":"ok","version":"0.4.2"}` |
 | `GET` | `/validate?email=…&method=…` | Validate a single email |
 | `POST` | `/validate` | Batch validate up to 1000 emails |
 
